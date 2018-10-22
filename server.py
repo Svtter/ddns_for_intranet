@@ -1,145 +1,91 @@
-# coding=utf-8
+#!/usr/bin/env python3
+# Copyright (c) Twisted Matrix Laboratories.
+# See LICENSE for details.
+
 """
-LICENSE http://www.apache.org/licenses/LICENSE-2.0
+An example demonstrating how to create a custom DNS server.
+
+The server will calculate the responses to A queries where the name begins with
+the word "workstation".
+
+Other queries will be handled by a fallback resolver.
+
+eg
+    python doc/names/howto/listings/names/override_server.py
+
+    $ dig -p 10053 @localhost workstation1.example.com A +short
+    172.0.2.1
 """
-import datetime
-import sys
-import time
-import threading
-import traceback
-import socketserver
-from dnslib import *
+
+from twisted.internet import reactor, defer
+from twisted.names import client, dns, error, server
 
 
-class DomainName(str):
-    def __getattr__(self, item):
-        return DomainName(item + '.' + self)
+
+class DynamicResolver(object):
+    """
+    A resolver which calculates the answers to certain queries based on the query type and name.
+    """
+    _pattern = 'workstation'
+    _network = '172.0.2'
+
+    def _dynamicResponseRequired(self, query):
+        """
+        Check the query to determine if a dynamic response is required.
+        """
+        if query.type == dns.A:
+            labels = str(query.name).split('.')
+            if labels[0].startswith(self._pattern):
+                return True
+
+        return False
 
 
-D = DomainName('example.com')
-IP = '127.0.0.1'
-TTL = 60 * 5
-PORT = 5053
+    def _doDynamicResponse(self, query):
+        """
+        Calculate the response to a query.
+        """
+        name = str(query.name)
+        labels = name.split('.')
+        parts = labels[0].split(self._pattern)
+        lastOctet = int(parts[1])
+        answer = dns.RRHeader(
+            name=name,
+            payload=dns.Record_A(address='%s.%s' % (self._network, lastOctet)))
+        answers = [answer]
+        authority = []
+        additional = []
+        return answers, authority, additional
 
-soa_record = SOA(
-    mname=D.ns1,  # primary name server
-    rname=D.andrei,  # email of the domain administrator
-    times=(
-        201307231,  # serial number
-        60 * 60 * 1,  # refresh
-        60 * 60 * 3,  # retry
-        60 * 60 * 24,  # expire
-        60 * 60 * 1,  # minimum
+
+    def query(self, query, timeout=None):
+        """
+        Check if the query should be answered dynamically, otherwise dispatch to
+        the fallback resolver.
+        """
+        if self._dynamicResponseRequired(query):
+            return defer.succeed(self._doDynamicResponse(query))
+        else:
+            return defer.fail(error.DomainError())
+
+
+
+def main():
+    """
+    Run the server.
+    """
+    factory = server.DNSServerFactory(
+        clients=[DynamicResolver(), client.Resolver(resolv='/etc/resolv.conf')]
     )
-)
-ns_records = [NS(D.ns1), NS(D.ns2)]
-records = {
-    D: [A(IP), AAAA((0,) * 16), MX(D.mail), soa_record] + ns_records,
-    D.ns1: [A(IP)],  # MX and NS records must never point to a CNAME alias (RFC 2181 section 10.3)
-    D.ns2: [A(IP)],
-    D.mail: [A(IP)],
-    D.andrei: [CNAME(D)],
-}
 
+    protocol = dns.DNSDatagramProtocol(controller=factory)
 
-def dns_response(data):
-    request = DNSRecord.parse(data)
+    reactor.listenUDP(10053, protocol)
+    reactor.listenTCP(10053, factory)
 
-    print(request)
+    reactor.run()
 
-    reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
-
-    qname = request.q.qname
-    qn = str(qname)
-    qtype = request.q.qtype
-    qt = QTYPE[qtype]
-
-    if qn == D or qn.endswith('.' + D):
-
-        for name, rrs in records.iteritems():
-            if name == qn:
-                for rdata in rrs:
-                    rqt = rdata.__class__.__name__
-                    if qt in ['*', rqt]:
-                        reply.add_answer(RR(rname=qname, rtype=QTYPE[rqt], rclass=1, ttl=TTL, rdata=rdata))
-
-        for rdata in ns_records:
-            reply.add_ns(RR(rname=D, rtype=QTYPE.NS, rclass=1, ttl=TTL, rdata=rdata))
-
-        reply.add_ns(RR(rname=D, rtype=QTYPE.SOA, rclass=1, ttl=TTL, rdata=soa_record))
-
-    print("---- Reply:\n", reply)
-
-    return reply.pack()
-
-
-class BaseRequestHandler(socketserver.BaseRequestHandler):
-
-    def get_data(self):
-        raise NotImplementedError
-
-    def send_data(self, data):
-        raise NotImplementedError
-
-    def handle(self):
-        now = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')
-        print("\n\n%s request %s (%s %s):" % (self.__class__.__name__[:3], now, self.client_address[0],
-                                               self.client_address[1]))
-        try:
-            data = self.get_data()
-            # repr(data).replace('\\x', '')[1:-1]
-            print(len(data), data.encode('hex'))  
-            self.send_data(dns_response(data))
-        except Exception:
-            traceback.print_exc(file=sys.stderr)
-
-
-class TCPRequestHandler(BaseRequestHandler):
-
-    def get_data(self):
-        data = self.request.recv(8192).strip()
-        sz = int(data[:2].encode('hex'), 16)
-        if sz < len(data) - 2:
-            raise Exception("Wrong size of TCP packet")
-        elif sz > len(data) - 2:
-            raise Exception("Too big TCP packet")
-        return data[2:]
-
-    def send_data(self, data):
-        sz = hex(len(data))[2:].zfill(4).decode('hex')
-        return self.request.sendall(sz + data)
-
-
-class UDPRequestHandler(BaseRequestHandler):
-
-    def get_data(self):
-        return self.request[0].strip()
-
-    def send_data(self, data):
-        return self.request[1].sendto(data, self.client_address)
 
 
 if __name__ == '__main__':
-    print("Starting nameserver...")
-
-    servers = [
-        socketserver.ThreadingUDPServer(('', PORT), UDPRequestHandler),
-        socketserver.ThreadingTCPServer(('', PORT), TCPRequestHandler),
-    ]
-    for s in servers:
-        thread = threading.Thread(target=s.serve_forever)  # that thread will start one more thread for each request
-        thread.daemon = True  # exit the server thread when the main thread terminates
-        thread.start()
-        print("%s server loop running in thread: %s" % (s.RequestHandlerClass.__name__[:3], thread.name))
-
-    try:
-        while 1:
-            time.sleep(1)
-            sys.stderr.flush()
-            sys.stdout.flush()
-
-    except KeyboardInterrupt:
-        pass
-    finally:
-        for s in servers:
-            s.shutdown()
+    raise SystemExit(main())
