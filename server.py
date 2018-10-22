@@ -19,15 +19,16 @@ eg
 
 from twisted.internet import reactor, defer
 from twisted.names import client, dns, error, server
-
+from xmlclient import query_ip
+from consts import pattern
+from utils import filter_name
 
 
 class DynamicResolver(object):
+    """ A resolver which calculates the answers
+    to certain queries based on the query type and name.
     """
-    A resolver which calculates the answers to certain queries based on the query type and name.
-    """
-    _pattern = 'workstation'
-    _network = '172.0.2'
+    _pattern = pattern
 
     def _dynamicResponseRequired(self, query):
         """
@@ -40,34 +41,32 @@ class DynamicResolver(object):
 
         return False
 
-
     def _doDynamicResponse(self, query):
         """
         Calculate the response to a query.
         """
+
         name = str(query.name)
-        labels = name.split('.')
-        parts = labels[0].split(self._pattern)
-        lastOctet = int(parts[1])
+        parts = filter_name(name)
+        ip = query_ip(parts)
+
         answer = dns.RRHeader(
             name=name,
-            payload=dns.Record_A(address='%s.%s' % (self._network, lastOctet)))
+            payload=dns.Record_A(address=ip))
         answers = [answer]
         authority = []
         additional = []
         return answers, authority, additional
 
-
     def query(self, query, timeout=None):
         """
-        Check if the query should be answered dynamically, otherwise dispatch to
-        the fallback resolver.
+        Check if the query should be answered dynamically, otherwise
+        dispatch to the fallback resolver.
         """
         if self._dynamicResponseRequired(query):
             return defer.succeed(self._doDynamicResponse(query))
         else:
             return defer.fail(error.DomainError())
-
 
 
 def main():
@@ -84,7 +83,6 @@ def main():
     reactor.listenTCP(10053, factory)
 
     reactor.run()
-
 
 
 if __name__ == '__main__':

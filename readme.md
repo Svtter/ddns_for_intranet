@@ -7,6 +7,7 @@ This is a DDNS server, aimed at intranet.
 
 - [twisted test](./override_server.py)
 - [dnslib test](./server.py)
+- dynamic add record
 
 ### Use xmlserver as middleware.
 
@@ -15,4 +16,5 @@ This is a DDNS server, aimed at intranet.
 
 ## TODO
 
-- dynamic add record ~ working ...
+- [ ] production
+- [ ] Unit test

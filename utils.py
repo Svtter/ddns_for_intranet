@@ -5,6 +5,7 @@
 
 import json
 import threading
+from consts import pattern
 
 
 def load_data(filename):
@@ -30,3 +31,9 @@ def change_record(name, ip):
     write_data('data.json', dns_dict)
 
     lock.release()
+
+
+def filter_name(name):
+    if name.startswith(pattern):
+        parts = name[len(pattern)+1:]
+    return parts
