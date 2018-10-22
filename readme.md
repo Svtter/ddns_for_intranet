@@ -2,7 +2,7 @@
 
 This is a DDNS server, aimed at intranet.
 
-**Solve the ip changes in intranet.
+**Solve the ip changes in intranet. Star if you like it.
 
 
 ## finished
