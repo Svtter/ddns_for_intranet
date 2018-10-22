@@ -24,6 +24,8 @@ def query_ip(name):
 
 if __name__ == '__main__':
     test_name = filter_name('server.test')
+
+    # inter-query
     query_ip(test_name)
     update_ip(test_name)
     query_ip(test_name)
