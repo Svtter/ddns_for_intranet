@@ -18,3 +18,4 @@ This is a DDNS server, aimed at intranet.
 
 - [ ] production
 - [ ] Unit test
+- [ ] Dockerfile for normal test.
