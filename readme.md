@@ -8,7 +8,11 @@ This is a DDNS server, aimed at intranet.
 - [twisted test](./override_server.py)
 - [dnslib test](./server.py)
 
+### Use xmlserver as middleware.
+
+- client to xmlserver
+- local dns to xmlserver
 
 ## TODO
 
-- dynamic add record
+- dynamic add record ~ working ...
